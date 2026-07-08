@@ -97,6 +97,8 @@ st.markdown(
         [data-testid="stTable"] table {{ background: #ffffff; color: #1a1d23; }}
         [data-testid="stTable"] th, [data-testid="stTable"] td {{ color: #1a1d23 !important; border-color: #e2e5ea !important; }}
         [data-testid="stExpander"] {{ background: #ffffff; border: 1px solid #e2e5ea; border-radius: 8px; }}
+        [data-testid="stExpander"] details, [data-testid="stExpander"] summary {{ background: #ffffff !important; }}
+        [data-testid="stExpander"] summary:hover {{ background: #f4f5f7 !important; }}
         [data-testid="stExpander"] summary, [data-testid="stExpander"] summary * {{ color: #1a1d23 !important; }}
 
         /* Кнопки — акцентные, белый текст */
@@ -160,46 +162,34 @@ def build_generator(api_key: str, folder_id: str, model_id: str) -> IPRGenerator
 # ---------------------------------------------------------------------------
 
 
-def render_sidebar() -> str:
+STEP_LABELS = ["1 · Загрузка 360°", "2 · Экраны выбора", "3 · Генерация ИПР"]
+
+
+def render_sidebar() -> None:
+    """Рисует навигацию. Активный этап хранится в st.session_state.step (1–3)."""
+    st.session_state.setdefault("step", 1)
     with st.sidebar:
         st.markdown("## 🎯 ИПР·AI")
         st.caption("Генерация индивидуального плана развития по данным 360°")
 
-        section = st.radio(
-            "Этап",
-            options=[
-                "1 · Загрузка 360°",
-                "2 · Экраны выбора",
-                "3 · Генерация ИПР",
-            ],
+        # Радио без key: индексом управляет session_state.step, клик — сверяем и перерисовываем
+        choice = st.radio(
+            "Этап", options=STEP_LABELS, index=st.session_state.step - 1,
             label_visibility="collapsed",
         )
-
-        st.divider()
-        st.markdown("**Доступ к DeepSeek (Яндекс Клауд)**")
-        st.text_input(
-            "API-ключ сервисного аккаунта",
-            type="password", key="manual_api_key", placeholder="AQVN...",
-            help="Ключ сервисного аккаунта с ролью ai.languageModels.user.",
-        )
-        st.text_input(
-            "folder_id", key="manual_folder_id", placeholder="b1g...",
-            help="Идентификатор каталога Яндекс Клауда.",
-        )
-        st.text_input(
-            "id модели", key="manual_model_id", placeholder="deepseek-v3",
-            help="Скопируй точный id модели DeepSeek из Model Gallery. По умолчанию deepseek-v3.",
-        )
-        api_key, folder_id, _ = resolve_credentials()
-        if api_key and folder_id:
-            st.success("Доступ настроен", icon="✅")
-        else:
-            st.info("Нужны ключ и folder_id", icon="ℹ️")
+        chosen = STEP_LABELS.index(choice) + 1
+        if chosen != st.session_state.step:
+            st.session_state.step = chosen
+            st.rerun()
 
         st.divider()
         st.caption("Пайплайн: препроцессинг → промпт DeepSeek → DOCX / ICS")
 
-    return section
+
+def goto_step(step: int) -> None:
+    """Переключает активный этап и перерисовывает страницу."""
+    st.session_state.step = step
+    st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +198,6 @@ def render_sidebar() -> str:
 
 
 def page_upload() -> None:
-    st.markdown('<span class="step-badge">Этап 1</span>', unsafe_allow_html=True)
     st.title("Загрузка результатов 360°")
     st.write(
         "Загрузи CSV-выгрузку опроса. Колонки: тип, название, оценка, комментарий. "
@@ -230,9 +219,15 @@ def page_upload() -> None:
         st.session_state["profile"] = profile
         st.success("Файл распознан. Проверь, что данные считаны верно.", icon="✅")
         _show_profile(profile)
+        st.divider()
+        if st.button("Далее → Экраны выбора", type="primary"):
+            goto_step(2)
     elif "profile" in st.session_state:
         st.info("Файл уже загружен ранее. Можно перейти к экранам выбора.")
         _show_profile(st.session_state["profile"])
+        st.divider()
+        if st.button("Далее → Экраны выбора", type="primary"):
+            goto_step(2)
 
 
 def _show_profile(profile: Profile360) -> None:
@@ -241,20 +236,17 @@ def _show_profile(profile: Profile360) -> None:
     col2.metric("Деструкторы", len(profile.destructors))
     col3.metric("Оценки ролей", len(profile.roles))
 
-    with st.expander("Что распознано", expanded=True):
+    with st.container(border=True):
+        st.markdown("**Что распознано**")
         if profile.competencies:
-            st.markdown("**Компетенции**")
+            st.markdown("Компетенции")
             st.table(_items_to_rows(profile.competencies))
         if profile.destructors:
-            st.markdown("**Деструкторы**")
+            st.markdown("Деструкторы")
             st.table(_items_to_rows(profile.destructors))
         if profile.roles:
-            st.markdown("**Роли**")
+            st.markdown("Роли")
             st.table(_items_to_rows(profile.roles))
-        if profile.qualitative_comments:
-            st.markdown("**Качественные комментарии** (в характеристику профиля не выводятся)")
-            for c in profile.qualitative_comments:
-                st.caption(f"— {c}")
 
 
 def _items_to_rows(items) -> list[dict]:
@@ -267,7 +259,6 @@ def _items_to_rows(items) -> list[dict]:
 
 
 def page_choices() -> None:
-    st.markdown('<span class="step-badge">Этап 2</span>', unsafe_allow_html=True)
     st.title("Экраны выбора")
     st.write(
         "Ответы задают контекст развития (раздел 2) и интенсивность плана. "
@@ -357,17 +348,23 @@ def page_choices() -> None:
             help="Влияет на реалистичность ритма и нагрузку плана.",
         )
 
-    if st.button("Сохранить ответы", type="primary"):
-        if not full_name.strip():
-            st.warning("Укажи ФИО сотрудника.")
-            return
-        st.session_state["intent_raw"] = {
-            "full_name": full_name, "role": role, "period": period,
-            "direction": direction, "direction_note": direction_note,
-            "expectations": [e1, e2, e3],
-            "readiness": readiness, "hours_per_week": hours,
-        }
-        st.success("Ответы сохранены. Можно переходить к генерации.", icon="✅")
+    st.divider()
+    nav_back, nav_next = st.columns([1, 1])
+    with nav_back:
+        if st.button("← Назад к загрузке"):
+            goto_step(1)
+    with nav_next:
+        if st.button("Далее → Генерация", type="primary"):
+            if not full_name.strip():
+                st.warning("Укажи ФИО сотрудника.")
+                return
+            st.session_state["intent_raw"] = {
+                "full_name": full_name, "role": role, "period": period,
+                "direction": direction, "direction_note": direction_note,
+                "expectations": [e1, e2, e3],
+                "readiness": readiness, "hours_per_week": hours,
+            }
+            goto_step(3)
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +373,9 @@ def page_choices() -> None:
 
 
 def page_generate() -> None:
-    st.markdown('<span class="step-badge">Этап 3</span>', unsafe_allow_html=True)
     st.title("Генерация ИПР")
+    if st.button("← Назад к экранам выбора"):
+        goto_step(2)
 
     profile = st.session_state.get("profile")
     raw = st.session_state.get("intent_raw")
@@ -440,27 +438,118 @@ def _show_result(data: dict, raw: dict) -> None:
         file_name=f"ИПР_{safe_name}.ics", mime="text/calendar",
     )
 
-    st.subheader("Превью")
+    st.subheader("Превью полного плана")
+    st.caption("Это тот же текст, что и в DOCX. Календарь — в файле ICS.")
+
     if data.get("intro"):
         st.markdown(f"_{data['intro']}_")
+
+    # 1. Контекст и назначение
     s1 = data.get("section1", {})
-    if s1.get("purpose"):
-        st.markdown("**1. Контекст и назначение**")
-        st.write(s1["purpose"])
+    if s1:
+        st.markdown("### 1. Контекст и назначение")
+        if s1.get("purpose"):
+            st.write(s1["purpose"])
+        if s1.get("strengths"):
+            st.markdown("**Сильные стороны, на которые опирается план:**")
+            for it in s1["strengths"]:
+                st.markdown(f"- {it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
+        if s1.get("growth_zones"):
+            st.markdown("**Зоны роста, на которые направлен план:**")
+            for it in s1["growth_zones"]:
+                st.markdown(f"- {it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
+
+    # 2. Контекст развития
+    s2 = data.get("section2", {})
+    if s2:
+        st.markdown("### 2. Контекст развития")
+        if s2.get("narrative"):
+            st.write(s2["narrative"])
+        t = s2.get("table", {})
+        if t:
+            for label, key in [("Что мотивирует", "motivates"), ("Фокус плана", "focus"),
+                               ("Ключевой сдвиг", "key_shift"), ("Вне фокуса", "out_of_focus")]:
+                if t.get(key):
+                    st.markdown(f"- **{label}:** {t[key]}")
+        if s2.get("source_note"):
+            st.caption(s2["source_note"])
+
+    # 3. Зоны роста
+    s3 = data.get("section3", {})
+    if s3.get("zones"):
+        st.markdown("### 3. Зоны роста по результатам 360°")
+        if s3.get("intro"):
+            st.write(s3["intro"])
+        for i, z in enumerate(s3["zones"], 1):
+            st.markdown(f"**3.{i}. {z.get('title','')} — {z.get('score','')}**")
+            st.write(z.get("text", ""))
+
+    # 4. Направления развития
     s4 = data.get("section4", {})
     if s4.get("directions"):
-        st.markdown("**4. Направления развития**")
+        st.markdown("### 4. Направления развития")
+        if s4.get("intro"):
+            st.write(s4["intro"])
         for d in s4["directions"]:
-            with st.expander(f"{d.get('num','')} {d.get('title','')}"):
-                st.write("**Цель:**", d.get("goal", ""))
-                ras = d.get("risk_and_support", {})
-                if ras:
-                    st.write("**Риски и поддержка:**", ras.get("risk", ""))
-                    if ras.get("psychological_support"):
-                        st.caption(ras["psychological_support"])
+            st.markdown(f"#### {d.get('num','')} {d.get('title','')}")
+            for label, key in [("Компетенция", "competency"), ("Основание (360°)", "basis_360"),
+                               ("Опора на сильное", "strength_support"), ("Цель развития", "goal")]:
+                if d.get(key):
+                    st.markdown(f"**{label}:** {d[key]}")
+            if d.get("workplace"):
+                st.markdown("**На рабочем месте:**")
+                for a in d["workplace"]:
+                    st.markdown(f"- {a}")
+            if d.get("projects"):
+                st.markdown("**Развивающие проекты:**")
+                for a in d["projects"]:
+                    st.markdown(f"- {a}")
+            if d.get("comfort_zone"):
+                st.markdown(f"**Выход из зоны комфорта:** {d['comfort_zone']}")
+            if d.get("criteria"):
+                st.markdown("**Критерии достижения:**")
+                for a in d["criteria"]:
+                    st.markdown(f"- {a}")
+            ras = d.get("risk_and_support", {})
+            if ras:
+                parts = [ras.get("risk", ""), ras.get("how_to_manage", ""), ras.get("psychological_support", "")]
+                st.markdown("**Риски и поддержка:** " + " ".join(p for p in parts if p))
 
-    with st.expander("Полный JSON ответа"):
-        st.json(data)
+    # 5. Обучение
+    s5 = data.get("section5", {})
+    if s5:
+        st.markdown("### 5. Обучение и источники")
+        if s5.get("intro"):
+            st.write(s5["intro"])
+        for grp in s5.get("books", []):
+            if grp.get("theme"):
+                st.markdown(f"**{grp['theme']}**")
+            for bk in grp.get("items", []):
+                st.markdown(f"- {bk.get('author','')} «{bk.get('title','')}» — {bk.get('note','')}")
+        if s5.get("internal_formats"):
+            st.markdown("**Форматы внутреннего обучения:**")
+            for f in s5["internal_formats"]:
+                st.markdown(f"- {f}")
+        if s5.get("external_programs"):
+            st.markdown("**Внешние программы:**")
+            for f in s5["external_programs"]:
+                st.markdown(f"- {f}")
+        if s5.get("source_note"):
+            st.caption(s5["source_note"])
+
+    # 6. Точки контроля
+    s7 = data.get("section7", {})
+    if s7.get("questions"):
+        st.markdown("### 6. Точки контроля — вопросы для саморефлексии")
+        if s7.get("note"):
+            st.caption(s7["note"])
+        for q in s7["questions"]:
+            st.markdown(f"- **{q.get('quarter','')}** ({q.get('intensity','')}): {q.get('question','')}")
+
+    # 7. Согласование
+    if data.get("section8"):
+        st.markdown("### 7. Согласование")
+        st.write(data["section8"])
 
 
 # ---------------------------------------------------------------------------
@@ -469,10 +558,11 @@ def _show_result(data: dict, raw: dict) -> None:
 
 
 def main() -> None:
-    section = render_sidebar()
-    if section.startswith("1"):
+    render_sidebar()
+    step = st.session_state.get("step", 1)
+    if step == 1:
         page_upload()
-    elif section.startswith("2"):
+    elif step == 2:
         page_choices()
     else:
         page_generate()

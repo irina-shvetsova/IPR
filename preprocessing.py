@@ -115,6 +115,16 @@ def _ru_number(value: float) -> str:
     return f"{value:.1f}".replace(".", ",")
 
 
+def _clean_text(raw) -> str:
+    """Приводит значение к строке, считая nan/none/пусто пустой строкой."""
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if text.lower() in ("nan", "none", "null", "<na>"):
+        return ""
+    return text
+
+
 def _parse_score(raw) -> float | None:
     """Аккуратно приводит значение оценки к float, принимая запятую и точку."""
     if raw is None:
@@ -166,8 +176,8 @@ def parse_360_csv(file_bytes: bytes) -> Profile360:
     for _, row in df.iterrows():
         raw_type = str(row.get("type", "")).strip().lower()
         item_type = _TYPE_ALIASES.get(raw_type, "")
-        name = str(row.get("name", "")).strip()
-        comment = str(row.get("comment", "")).strip()
+        name = _clean_text(row.get("name", ""))
+        comment = _clean_text(row.get("comment", ""))
         score = _parse_score(row.get("score"))
 
         # Свободный комментарий без оценки
