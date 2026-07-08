@@ -29,6 +29,11 @@ from typing import Optional
 
 from openai import OpenAI
 
+try:
+    from json_repair import repair_json
+except Exception:  # noqa: BLE001 — библиотека опциональна; без неё работает обычный json
+    repair_json = None
+
 from preprocessing import Profile360
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -147,6 +152,29 @@ class IPRResult:
 # ---------------------------------------------------------------------------
 
 
+# План генерируется по частям, чтобы каждый ответ укладывался в лимит вывода
+# модели (у «лёгких» моделей он небольшой) и JSON не обрывался. Части склеиваются.
+_CHUNKS = [
+    ("контекст", """{
+  "intro": "вводный абзац: развитие идёт неровно — это нормально; по дороге есть предсказуемые препятствия; план на данных 360°",
+  "header": {"full_name": "...", "role": "...", "period": "...", "basis": "Результаты опроса 360° и ответы сотрудника"},
+  "section1": {"purpose": "2–3 абзаца о назначении плана и опоре на сильный профиль", "strengths": [{"name": "...", "score": "9,5", "note": "..."}], "growth_zones": [{"name": "...", "score": "6,3", "note": "..."}]},
+  "section2": {"narrative": "2–3 абзаца контекста развития из ответов сотрудника", "table": {"motivates": "...", "focus": "...", "key_shift": "...", "out_of_focus": "..."}, "source_note": "Сформулировано из твоих ответов на вводные вопросы."},
+  "section3": {"intro": "...", "zones": [{"title": "...", "score": "6,3", "text": "отдельный абзац по каждой зоне роста"}]}
+}"""),
+    ("направления", """{
+  "section4": {"intro": "...", "directions": [{"num": "4.1", "title": "...", "competency": "...", "basis_360": "...", "strength_support": "...", "goal": "...", "workplace": ["3–4 конкретных действия"], "projects": ["1–2 проекта"], "comfort_zone": "...", "criteria": ["3–4 критерия по циклам, без календарных дат"], "risk_and_support": {"risk": "...", "how_to_manage": "...", "psychological_support": "..."}}]}
+}
+Верни 2–3 направления, каждое с полностью заполненными полями."""),
+    ("обучение и контроль", """{
+  "section5": {"intro": "...", "source_note": "Подбор опирается на внутреннюю библиотеку рекомендаций (дельтовскую библиотеку).", "books": [{"theme": "...", "items": [{"author": "Имя на русском", "title": "Название на русском", "note": "..."}]}], "internal_formats": ["..."], "external_programs": ["..."]},
+  "section7": {"title": "Точки контроля — вопросы для саморефлексии", "note": "Раз в квартал в календарь приходит один вопрос. Сначала мягкие, дальше жёстче и конкретнее.", "questions": [{"quarter": "1 квартал", "intensity": "мягко", "question": "..."}, {"quarter": "2 квартал", "intensity": "средне", "question": "..."}, {"quarter": "3 квартал", "intensity": "жёстче", "question": "..."}, {"quarter": "4 квартал", "intensity": "конкретно", "question": "..."}]},
+  "section8": "1–2 абзаца про согласование"
+}
+Раздел 5 — 4–6 книг, сгруппированных по темам."""),
+]
+
+
 class IPRGenerator:
     """
     Генератор индивидуального плана развития через DeepSeek в Яндекс Клауде.
@@ -206,38 +234,63 @@ class IPRGenerator:
         return self._client.chat.completions.create(**kwargs)
 
     def generate(self, profile: Profile360, intent: EmployeeIntent) -> IPRResult:
-        """Генерирует ИПР по профилю 360° и ответам сотрудника."""
+        """
+        Генерирует ИПР по частям и склеивает в один документ.
+
+        План делится на три части (контекст, направления, обучение и контроль).
+        Каждая часть — отдельный запрос, чтобы ответ укладывался в лимит вывода
+        модели и JSON не обрывался. Части объединяются в общий словарь.
+        """
         system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(profile, intent)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        base_prompt = self._build_user_prompt(profile, intent)
 
-        try:
-            # Сначала пробуем со строгим JSON-форматом; если модель его не
-            # принимает, повторяем без него (промпт всё равно требует чистый JSON).
-            try:
-                response = self._call_model(messages, use_json_format=True)
-            except Exception as fmt_err:  # noqa: BLE001
-                logger.warning("response_format не принят, повтор без него: %s", fmt_err)
-                response = self._call_model(messages, use_json_format=False)
+        data: dict = {}
+        total_tokens = 0
+        errors: list[str] = []
 
-            raw = response.choices[0].message.content or ""
-            tokens = response.usage.total_tokens if response.usage else 0
-            data = self._parse_response(raw)
-            logger.info("ИПР сгенерирован. Токенов: %d", tokens)
-            return IPRResult(
-                data=data, raw_response=raw, successful=True, tokens_consumed=tokens
+        for name, schema in _CHUNKS:
+            user_prompt = (
+                base_prompt
+                + "\n\nВ ЭТОТ РАЗ верни JSON ТОЛЬКО со следующими полями "
+                "(и ничем больше):\n" + schema
             )
-        except json.JSONDecodeError as parse_err:
-            msg = f"Ответ модели не разобран как JSON: {parse_err}"
-            logger.error(msg)
-            return IPRResult(successful=False, error_message=msg)
-        except Exception as exc:  # noqa: BLE001 — показываем пользователю любую ошибку API
-            msg = f"Ошибка обращения к DeepSeek (Яндекс Клауд): {exc}"
-            logger.error(msg)
-            return IPRResult(successful=False, error_message=msg)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+            try:
+                try:
+                    response = self._call_model(messages, use_json_format=True)
+                except Exception as fmt_err:  # noqa: BLE001
+                    logger.warning("response_format не принят (%s), повтор без него", name)
+                    response = self._call_model(messages, use_json_format=False)
+
+                raw = response.choices[0].message.content or ""
+                if response.usage:
+                    total_tokens += response.usage.total_tokens
+                part = self._parse_response(raw)
+                if isinstance(part, dict):
+                    data.update(part)
+                    logger.info("Часть «%s» получена (%d полей)", name, len(part))
+                else:
+                    errors.append(f"«{name}»: неожиданный формат")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"«{name}»: {exc}")
+                logger.error("Часть «%s» не сгенерирована: %s", name, exc)
+
+        if not data:
+            return IPRResult(
+                successful=False,
+                error_message="Не удалось получить план. " + "; ".join(errors),
+            )
+
+        note = None
+        if errors:
+            note = "План собран частично, некоторые разделы могли не заполниться: " + "; ".join(errors)
+        logger.info("ИПР собран из %d частей. Токенов: %d", len(_CHUNKS) - len(errors), total_tokens)
+        return IPRResult(
+            data=data, successful=True, tokens_consumed=total_tokens, error_message=note
+        )
 
     # ------------------------------------------------------------------
     # Промпт
@@ -314,62 +367,9 @@ class IPRGenerator:
 а про Y», «парадокс, который стоит за».
 
 # ФОРМАТ ВЫВОДА
-Верни СТРОГО валидный JSON-объект без markdown-обёрток и без комментариев, по схеме:
-
-{
-  "intro": "вводный абзац (правка 1)",
-  "header": {"full_name": "...", "role": "...", "period": "...", "basis": "Результаты опроса 360° и ответы сотрудника"},
-  "section1": {
-    "purpose": "1–2 абзаца: назначение плана, опора на сильный профиль",
-    "strengths": [{"name": "...", "score": "9,5", "note": "..."}],
-    "growth_zones": [{"name": "...", "score": "6,3", "note": "..."}]
-  },
-  "section2": {
-    "narrative": "контекст развития, опираясь на ответы сотрудника",
-    "table": {"motivates": "...", "focus": "...", "key_shift": "...", "out_of_focus": "..."},
-    "source_note": "Сформулировано из твоих ответов на вводные вопросы."
-  },
-  "section3": {
-    "intro": "...",
-    "zones": [{"title": "...", "score": "6,3", "text": "..."}]
-  },
-  "section4": {
-    "intro": "...",
-    "directions": [{
-      "num": "4.1",
-      "title": "...",
-      "competency": "...",
-      "basis_360": "...",
-      "strength_support": "...",
-      "goal": "...",
-      "workplace": ["действие 1", "действие 2"],
-      "projects": ["..."],
-      "comfort_zone": "...",
-      "criteria": ["по циклам, без календарных дат"],
-      "risk_and_support": {"risk": "...", "how_to_manage": "...", "psychological_support": "..."}
-    }]
-  },
-  "section5": {
-    "intro": "...",
-    "source_note": "Подбор опирается на внутреннюю библиотеку рекомендаций (дельтовскую библиотеку).",
-    "books": [{"theme": "...", "items": [{"author": "Имя на русском", "title": "Название на русском", "note": "..."}]}],
-    "internal_formats": ["..."],
-    "external_programs": ["..."]
-  },
-  "section7": {
-    "title": "Точки контроля — вопросы для саморефлексии",
-    "note": "Раз в квартал в календарь приходит один вопрос. Сначала мягкие, дальше жёстче и конкретнее.",
-    "questions": [
-      {"quarter": "1 квартал", "intensity": "мягко", "question": "..."},
-      {"quarter": "2 квартал", "intensity": "средне", "question": "..."},
-      {"quarter": "3 квартал", "intensity": "жёстче", "question": "..."},
-      {"quarter": "4 квартал", "intensity": "конкретно", "question": "..."}
-    ]
-  },
-  "section8": "текст согласования"
-}
-
-Не добавляй ничего вне JSON. Не оставляй незаполненных полей-заглушек.
+Верни СТРОГО валидный JSON-объект: без markdown-обёрток, без комментариев, без текста вне JSON.
+В каждом задании ниже указано, КАКИЕ поля вернуть в этот раз — верни только их, полностью заполненными.
+Не оставляй незаполненных полей-заглушек. Экранируй кавычки внутри строк и не вставляй сырые переводы строк внутри значений.
 
 """ + _DEPTH_EXEMPLAR
 
@@ -407,9 +407,24 @@ class IPRGenerator:
     # ------------------------------------------------------------------
 
     def _parse_response(self, raw: str) -> dict:
-        """Разбирает ответ модели в dict, снимая возможные markdown-обёртки."""
+        """
+        Разбирает ответ модели в dict.
+
+        Снимает markdown-обёртки, затем пробует обычный json. Если ответ оборван
+        или слегка невалиден (частая беда LLM — обрыв по лимиту токенов),
+        восстанавливает через json_repair, чтобы вернуть хотя бы валидную часть.
+        """
         cleaned = raw.strip()
         if cleaned.startswith("```"):
             lines = cleaned.split("\n")
             cleaned = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
-        return json.loads(cleaned)
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            if repair_json is not None:
+                repaired = repair_json(cleaned, return_objects=True)
+                if isinstance(repaired, dict):
+                    logger.warning("JSON восстановлен через json_repair (был оборван/невалиден)")
+                    return repaired
+            raise

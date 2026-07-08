@@ -415,6 +415,8 @@ def page_generate() -> None:
 
         st.session_state["ipr_data"] = result.data
         st.success(f"План готов. Токенов: {result.tokens_consumed}", icon="✅")
+        if result.error_message:
+            st.warning(result.error_message)
 
     if "ipr_data" in st.session_state:
         _show_result(st.session_state["ipr_data"], raw)
