@@ -264,6 +264,12 @@ def page_choices() -> None:
         "Ответы задают контекст развития (раздел 2) и интенсивность плана. "
         "Это вводные вопросы, на которые опирается документ."
     )
+    st.info(
+        "Отвечай реалистично и в пределах периода плана. Цель — не «кем стать вообще», "
+        "а какой конкретный шаг сделать за этот срок. Формулируй как наблюдаемый "
+        "результат в работе, а не как общее желание.",
+        icon="🎯",
+    )
 
     answers = st.session_state.get("intent_raw", {})
 
@@ -274,6 +280,7 @@ def page_choices() -> None:
         "вертикально": "Вертикально — рост в уровне, больше ответственности и масштаба.",
     }
     dir_titles = {"углубление": "Углубление в роли", "горизонтально": "Горизонтально", "вертикально": "Вертикально"}
+    gender_options = ["Женский", "Мужской"]
 
     with st.container(border=True):
         st.subheader("Для кого план")
@@ -287,7 +294,15 @@ def page_choices() -> None:
             "Текущая роль", value=answers.get("role", ""),
             placeholder="Например: Руководитель направления",
         )
-        period = st.selectbox(
+        c3, c4 = st.columns(2)
+        gender = c3.radio(
+            "Пол", options=gender_options,
+            index=gender_options.index(answers.get("gender", "Женский"))
+            if answers.get("gender", "Женский") in gender_options else 0,
+            horizontal=True,
+            help="Нужен, чтобы в тексте плана правильно согласовывался род.",
+        )
+        period = c4.selectbox(
             "Период плана", options=["Полугодие", "Квартал", "Год"],
             index=["Полугодие", "Квартал", "Год"].index(answers.get("period", "Полугодие"))
             if answers.get("period", "Полугодие") in ("Полугодие", "Квартал", "Год") else 0,
@@ -296,7 +311,7 @@ def page_choices() -> None:
 
     with st.container(border=True):
         st.subheader("1. Направление движения")
-        st.caption("Куда движешься относительно текущей роли в ближайший год.")
+        st.caption("Куда движешься относительно текущей роли в пределах периода плана.")
         direction = st.radio(
             "Направление",
             options=dir_options,
@@ -309,20 +324,22 @@ def page_choices() -> None:
         direction_note = st.text_input(
             "Пояснение — своими словами",
             value=answers.get("direction_note", ""),
-            placeholder="Например: сильнее продукты и шире их принятие, без смены позиции",
-            help="Один-два предложения: что это значит для тебя на практике.",
+            placeholder="Например: вырасти до руководителя группы из 3–4 человек",
+            help="Реалистичный шаг на период, а не мечта на 10 лет. "
+                 "Не «хочу быть CEO», а «взять под управление первый проект целиком».",
         )
 
     with st.container(border=True):
         st.subheader("2. Три ожидания от работы через год")
-        st.caption("Принципиально не про карьерное качание — про содержание работы и её результат.")
+        st.caption("Не про должность, а про содержание работы и её видимый результат. "
+                   "Формулируй конкретно: что именно изменится в твоей работе.")
         prev_exp = (answers.get("expectations", ["", "", ""]) + ["", "", ""])[:3]
         e1 = st.text_input("Ожидание 1", value=prev_exp[0],
-                           placeholder="Например: продукты приносят больше и принимаются шире")
+                           placeholder="Например: сам веду переговоры с крупными клиентами")
         e2 = st.text_input("Ожидание 2", value=prev_exp[1],
-                           placeholder="Например: команда несёт продукт без постоянного моего участия")
+                           placeholder="Например: отвечаю за отдельный продукт, а не отдельные задачи")
         e3 = st.text_input("Ожидание 3", value=prev_exp[2],
-                           placeholder="Например: клиенты верят в результат, а не только в модель")
+                           placeholder="Например: команда решает типовые вопросы без меня")
 
     with st.container(border=True):
         st.subheader("3. Готовность вложиться в развитие")
@@ -360,6 +377,7 @@ def page_choices() -> None:
                 return
             st.session_state["intent_raw"] = {
                 "full_name": full_name, "role": role, "period": period,
+                "gender": gender,
                 "direction": direction, "direction_note": direction_note,
                 "expectations": [e1, e2, e3],
                 "readiness": readiness, "hours_per_week": hours,
@@ -401,6 +419,7 @@ def page_generate() -> None:
     if st.button("Сформировать ИПР", type="primary"):
         intent = EmployeeIntent(
             full_name=raw["full_name"], role=raw["role"], period=raw["period"],
+            gender=raw.get("gender", "Женский").lower(),
             direction=raw["direction"], direction_note=raw["direction_note"],
             expectations=[e for e in raw["expectations"] if e.strip()],
             readiness=raw["readiness"], hours_per_week=raw["hours_per_week"],
