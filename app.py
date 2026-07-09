@@ -25,6 +25,7 @@ import streamlit as st
 
 from preprocessing import Profile360, parse_360_csv
 from ipr_generator import EmployeeIntent, IPRGenerator, checkpoint_spec
+from plan_texts import SECTION1_TITLE, build_section1
 from renderers import render_docx, render_ics
 
 
@@ -460,23 +461,14 @@ def _show_result(data: dict, raw: dict) -> None:
     st.subheader("Превью полного плана")
     st.caption("Это тот же текст, что и в DOCX. Календарь — в файле ICS.")
 
-    if data.get("intro"):
-        st.markdown(f"_{data['intro']}_")
-
-    # 1. Контекст и назначение
-    s1 = data.get("section1", {})
-    if s1:
-        st.markdown("### 1. Контекст и назначение")
-        if s1.get("purpose"):
-            st.write(s1["purpose"])
-        if s1.get("strengths"):
-            st.markdown("**Сильные стороны, на которые опирается план:**")
-            for it in s1["strengths"]:
-                st.markdown(f"- {it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
-        if s1.get("growth_zones"):
-            st.markdown("**Зоны роста, на которые направлен план:**")
-            for it in s1["growth_zones"]:
-                st.markdown(f"- {it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
+    header = data.get("header", {})
+    st.markdown(f"### {SECTION1_TITLE}")
+    for para in build_section1(
+        header.get("full_name", raw.get("full_name", "")),
+        header.get("role", raw.get("role", "")),
+        header.get("period", raw.get("period", "Полугодие")),
+    ):
+        st.write(para)
 
     # 2. Контекст развития
     s2 = data.get("section2", {})
@@ -484,6 +476,14 @@ def _show_result(data: dict, raw: dict) -> None:
         st.markdown("### 2. Контекст развития")
         if s2.get("narrative"):
             st.write(s2["narrative"])
+        if s2.get("strengths"):
+            st.markdown("**Сильные стороны, на которые опирается план:**")
+            for it in s2["strengths"]:
+                st.markdown(f"- {it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
+        if s2.get("growth_zones"):
+            st.markdown("**Зоны роста, на которые направлен план:**")
+            for it in s2["growth_zones"]:
+                st.markdown(f"- {it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
         t = s2.get("table", {})
         if t:
             for label, key in [("Что мотивирует", "motivates"), ("Фокус плана", "focus"),

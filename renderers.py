@@ -20,6 +20,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
 from icalendar import Calendar, Event
 
+from plan_texts import SECTION1_TITLE, build_section1
+
 # Фирменный акцент — как в дельтовском референсе
 _ACCENT = RGBColor(0x7C, 0x3A, 0xED)
 _INK = RGBColor(0x1A, 0x1D, 0x23)
@@ -47,32 +49,26 @@ def render_docx(data: dict) -> bytes:
         _kv(doc, "Основание", header["basis"])
     _muted(doc, "Конфиденциальный документ", italic=True)
 
-    # Вводный текст (правка 1)
-    if data.get("intro"):
-        _spacer(doc)
-        _body(doc, data["intro"])
+    # Раздел 1 — универсальный, не генерируется моделью
+    _h1(doc, SECTION1_TITLE)
+    for para in build_section1(
+        header.get("full_name", ""), header.get("role", ""), header.get("period", "Полугодие")
+    ):
+        _body(doc, para)
 
-    # Раздел 1
-    s1 = data.get("section1", {})
-    _h1(doc, "1. КОНТЕКСТ И НАЗНАЧЕНИЕ ПЛАНА")
-    if s1.get("purpose"):
-        _body(doc, s1["purpose"])
-    if s1.get("strengths"):
-        _h2(doc, "Сильные стороны, на которые опирается план")
-        for it in s1["strengths"]:
-            _bullet(doc, f"{it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
-    if s1.get("growth_zones"):
-        _h2(doc, "Зоны роста, на которые направлен план")
-        for it in s1["growth_zones"]:
-            _bullet(doc, f"{it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
-    if s1.get("source_note"):
-        _muted(doc, s1["source_note"], italic=True)
-
-    # Раздел 2
+    # Раздел 2 — персональный контекст
     s2 = data.get("section2", {})
     _h1(doc, "2. КОНТЕКСТ РАЗВИТИЯ")
     if s2.get("narrative"):
         _body(doc, s2["narrative"])
+    if s2.get("strengths"):
+        _h2(doc, "Сильные стороны, на которые опирается план")
+        for it in s2["strengths"]:
+            _bullet(doc, f"{it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
+    if s2.get("growth_zones"):
+        _h2(doc, "Зоны роста, на которые направлен план")
+        for it in s2["growth_zones"]:
+            _bullet(doc, f"{it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
     table = s2.get("table", {})
     if table:
         rows = [
