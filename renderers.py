@@ -140,10 +140,6 @@ def render_docx(data: dict) -> bytes:
         _h2(doc, "Форматы внутреннего обучения")
         for f in s5["internal_formats"]:
             _bullet(doc, f)
-    if s5.get("external_programs"):
-        _h2(doc, "Внешние программы (по желанию)")
-        for f in s5["external_programs"]:
-            _bullet(doc, f)
 
     # Раздел 6 — точки контроля как квартальные вопросы саморефлексии
     s7 = data.get("section7", {})

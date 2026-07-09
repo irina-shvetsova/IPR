@@ -154,12 +154,35 @@ _CHUNKS = [
 }
 Верни 2–3 направления, каждое с полностью заполненными полями."""),
     ("обучение и контроль", """{
-  "section5": {"intro": "...", "source_note": "Подбор опирается на внутреннюю библиотеку рекомендаций (дельтовскую библиотеку).", "books": [{"theme": "...", "items": [{"author": "Имя на русском", "title": "Название на русском", "note": "..."}]}], "internal_formats": ["..."], "external_programs": ["..."]},
+  "section5": {"intro": "...", "source_note": "Подбор опирается на внутреннюю библиотеку рекомендаций (дельтовскую библиотеку).", "books": [{"theme": "...", "items": [{"author": "Имя на русском", "title": "Название на русском", "note": "..."}]}], "internal_formats": ["форматы внутреннего обучения, без названий внешних организаций"]},
   "section7": {"title": "Точки контроля — вопросы для саморефлексии", "note": "Раз в квартал в календарь приходит один вопрос. Сначала мягкие, дальше жёстче и конкретнее.", "questions": [{"quarter": "1 квартал", "intensity": "мягко", "question": "..."}, {"quarter": "2 квартал", "intensity": "средне", "question": "..."}, {"quarter": "3 квартал", "intensity": "жёстче", "question": "..."}, {"quarter": "4 квартал", "intensity": "конкретно", "question": "..."}]},
   "section8": "1–2 абзаца про согласование"
 }
-Раздел 5 — 4–6 книг, сгруппированных по темам."""),
+Раздел 5 — 4–6 книг, сгруппированных по темам. Поля "external_programs" НЕТ: не предлагай \
+внешние курсы, школы и тренинговые центры."""),
 ]
+
+# Паттерны, которых не должно быть в готовом плане: выдуманные метрики и источники.
+_FORBIDDEN_PATTERNS = [
+    (r"(?:вырас|вырос|подним|повыс|снизит?с|дойдёт)\w*\s+(?:минимум\s+)?(?:до|на)\s+\d+[,.]\d+", "целевой балл"),
+    (r"\bдо\s+\d+[,.]\d+\b", "целевой балл"),
+    (r"\bна\s+\d{1,3}\s?%", "процент"),
+    (r"(?:Сколково|Coursera|Нетология|Skillbox|Academy|Business School)", "внешняя организация"),
+    (r"(?:индекс|балл|показатель)\s+(?:по\s+)?\w+\s+вырос", "выдуманная метрика"),
+]
+
+
+def _find_violations(part: dict) -> list[str]:
+    """Ищет в сгенерированной части запрещённые выдуманные цифры и источники."""
+    import re as _re
+
+    text = json.dumps(part, ensure_ascii=False)
+    found: list[str] = []
+    for pattern, label in _FORBIDDEN_PATTERNS:
+        match = _re.search(pattern, text, _re.IGNORECASE)
+        if match:
+            found.append(f"{label}: «{match.group(0).strip()}»")
+    return found
 
 
 class IPRGenerator:
@@ -202,6 +225,7 @@ class IPRGenerator:
             self._model_uri = model_id
         else:
             self._model_uri = f"gpt://{folder_id}/{model_id}/latest"
+        self._tokens_this_run = 0
         logger.info("IPRGenerator инициализирован. Модель: %s", self._model_uri)
 
     # ------------------------------------------------------------------
@@ -220,6 +244,19 @@ class IPRGenerator:
             kwargs["response_format"] = {"type": "json_object"}
         return self._client.chat.completions.create(**kwargs)
 
+    def _generate_chunk(self, messages: list[dict]) -> dict:
+        """Один запрос к модели: вызов, подсчёт токенов, разбор JSON."""
+        try:
+            response = self._call_model(messages, use_json_format=True)
+        except Exception:  # noqa: BLE001 — модель может не принимать response_format
+            logger.warning("response_format не принят, повтор без него")
+            response = self._call_model(messages, use_json_format=False)
+
+        if response.usage:
+            self._tokens_this_run += response.usage.total_tokens
+        raw = response.choices[0].message.content or ""
+        return self._parse_response(raw)
+
     def generate(self, profile: Profile360, intent: EmployeeIntent) -> IPRResult:
         """
         Генерирует ИПР по частям и склеивает в один документ.
@@ -232,7 +269,7 @@ class IPRGenerator:
         base_prompt = self._build_user_prompt(profile, intent)
 
         data: dict = {}
-        total_tokens = 0
+        self._tokens_this_run = 0
         errors: list[str] = []
 
         for name, schema in _CHUNKS:
@@ -258,16 +295,31 @@ class IPRGenerator:
                 {"role": "user", "content": user_prompt},
             ]
             try:
-                try:
-                    response = self._call_model(messages, use_json_format=True)
-                except Exception as fmt_err:  # noqa: BLE001
-                    logger.warning("response_format не принят (%s), повтор без него", name)
-                    response = self._call_model(messages, use_json_format=False)
+                part = self._generate_chunk(messages)
 
-                raw = response.choices[0].message.content or ""
-                if response.usage:
-                    total_tokens += response.usage.total_tokens
-                part = self._parse_response(raw)
+                # Проверяем на выдуманные цифры и источники; при нарушении —
+                # один повтор с прямым указанием, что именно исправить.
+                violations = _find_violations(part)
+                if violations:
+                    logger.warning("Часть «%s»: нарушения %s — повтор", name, violations)
+                    fix = (
+                        "\n\nВ ПРОШЛЫЙ РАЗ ТЫ НАРУШИЛ ПРАВИЛА. Найдено: "
+                        + "; ".join(violations)
+                        + ".\nПерепиши эту часть заново БЕЗ выдуманных цифр (целевых баллов, "
+                        "процентов) и БЕЗ названий внешних курсов и организаций. "
+                        "Критерии — только наблюдаемые факты."
+                    )
+                    retry_messages = [
+                        messages[0],
+                        {"role": "user", "content": user_prompt + fix},
+                    ]
+                    retried = self._generate_chunk(retry_messages)
+                    if not _find_violations(retried):
+                        part = retried
+                        logger.info("Часть «%s»: повтор чистый", name)
+                    else:
+                        errors.append(f"«{name}»: остались выдуманные данные, проверьте вручную")
+
                 if isinstance(part, dict):
                     data.update(part)
                     logger.info("Часть «%s» получена (%d полей)", name, len(part))
@@ -286,9 +338,9 @@ class IPRGenerator:
         note = None
         if errors:
             note = "План собран частично, некоторые разделы могли не заполниться: " + "; ".join(errors)
-        logger.info("ИПР собран из %d частей. Токенов: %d", len(_CHUNKS) - len(errors), total_tokens)
+        logger.info("ИПР собран из %d частей. Токенов: %d", len(_CHUNKS) - len(errors), self._tokens_this_run)
         return IPRResult(
-            data=data, successful=True, tokens_consumed=total_tokens, error_message=note
+            data=data, successful=True, tokens_consumed=self._tokens_this_run, error_message=note
         )
 
     # ------------------------------------------------------------------

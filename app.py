@@ -551,10 +551,6 @@ def _show_result(data: dict, raw: dict) -> None:
             st.markdown("**Форматы внутреннего обучения:**")
             for f in s5["internal_formats"]:
                 st.markdown(f"- {f}")
-        if s5.get("external_programs"):
-            st.markdown("**Внешние программы:**")
-            for f in s5["external_programs"]:
-                st.markdown(f"- {f}")
         if s5.get("source_note"):
             st.caption(s5["source_note"])
 
