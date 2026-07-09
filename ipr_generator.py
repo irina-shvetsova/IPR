@@ -190,17 +190,80 @@ _FORBIDDEN_PATTERNS = [
 ]
 
 
-def _find_violations(part: dict) -> list[str]:
-    """Ищет в сгенерированной части запрещённые выдуманные цифры и источники."""
+def _find_violations(part: dict, gender: str = "") -> list[str]:
+    """
+    Ищет в сгенерированной части нарушения, которые можно поймать автоматически:
+    выдуманные цифры и источники, несогласованный род, кальки, перебор
+    конструкции «не X, а Y».
+    """
     import re as _re
 
     text = json.dumps(part, ensure_ascii=False)
     found: list[str] = []
+
     for pattern, label in _FORBIDDEN_PATTERNS:
         match = _re.search(pattern, text, _re.IGNORECASE)
         if match:
             found.append(f"{label}: «{match.group(0).strip()}»")
+
+    # Род: у женского недопустимы мужские формы прошедшего времени и краткие
+    # прилагательные, у мужского — женские.
+    if gender == "женский":
+        gender_patterns = [r"\bты\s+[а-яё]+л\b", r"\bты\s+готов\b", r"\bты\s+сам\b", r"\bты\s+уверен\b"]
+        gender_label = "мужская форма при женском роде"
+    elif gender == "мужской":
+        gender_patterns = [r"\bты\s+[а-яё]+ла\b", r"\bты\s+готова\b", r"\bты\s+сама\b"]
+        gender_label = "женская форма при мужском роде"
+    else:
+        gender_patterns, gender_label = [], ""
+
+    for pattern in gender_patterns:
+        match = _re.search(pattern, text, _re.IGNORECASE)
+        if match:
+            found.append(f"{gender_label}: «{match.group(0).strip()}»")
+            break
+
+    # Кальки и англицизмы
+    calque = _re.search(r"1-на-1|one-on-one|чек-ин|check-?in|win-win|фидбэк", text, _re.IGNORECASE)
+    if calque:
+        found.append(f"калька: «{calque.group(0)}»")
+
+    # Конструкция «не X, а Y» — не более двух на часть
+    nxy = _re.findall(r"не [^,\"]{3,45}, а ", text)
+    if len(nxy) > 2:
+        found.append(f"конструкция «не X, а Y» {len(nxy)} раз (допустимо 2)")
+
     return found
+
+
+def normalize_questions(data: dict, period: str) -> None:
+    """
+    Приводит вопросы саморефлексии к числу и подписям, заданным периодом плана.
+
+    Модель нередко возвращает четыре квартала независимо от периода, поэтому
+    список обрезается и переподписывается детерминированно, а интенсивность
+    расставляется по нарастающей.
+    """
+    count, labels, _ = checkpoint_spec(period)
+    section = data.get("section7")
+    if not isinstance(section, dict):
+        return
+
+    questions = section.get("questions") or []
+    questions = questions[:count]
+
+    ladder = ["мягко", "средне", "жёстче", "конкретно"]
+    for idx, question in enumerate(questions):
+        question["quarter"] = labels[idx] if idx < len(labels) else f"Точка {idx + 1}"
+        # Первая точка всегда мягкая, последняя — конкретная
+        if len(questions) == 1:
+            question["intensity"] = "мягко"
+        elif idx == len(questions) - 1:
+            question["intensity"] = "конкретно"
+        else:
+            question["intensity"] = ladder[min(idx, len(ladder) - 2)]
+
+    section["questions"] = questions
 
 
 class IPRGenerator:
@@ -326,26 +389,27 @@ class IPRGenerator:
 
                 # Проверяем на выдуманные цифры и источники; при нарушении —
                 # один повтор с прямым указанием, что именно исправить.
-                violations = _find_violations(part)
+                violations = _find_violations(part, intent.gender)
                 if violations:
                     logger.warning("Часть «%s»: нарушения %s — повтор", name, violations)
                     fix = (
                         "\n\nВ ПРОШЛЫЙ РАЗ ТЫ НАРУШИЛ ПРАВИЛА. Найдено: "
                         + "; ".join(violations)
-                        + ".\nПерепиши эту часть заново БЕЗ выдуманных цифр (целевых баллов, "
-                        "процентов) и БЕЗ названий внешних курсов и организаций. "
-                        "Критерии — только наблюдаемые факты."
+                        + ".\nПерепиши эту часть заново, устранив каждое нарушение. "
+                        f"Помни: пол сотрудника — {intent.gender}; никаких выдуманных цифр "
+                        "и названий внешних организаций; никаких калек; конструкцию "
+                        "«не X, а Y» использовать не более двух раз."
                     )
                     retry_messages = [
                         messages[0],
                         {"role": "user", "content": user_prompt + fix},
                     ]
                     retried = self._generate_chunk(retry_messages)
-                    if not _find_violations(retried):
+                    if not _find_violations(retried, intent.gender):
                         part = retried
                         logger.info("Часть «%s»: повтор чистый", name)
                     else:
-                        errors.append(f"«{name}»: остались выдуманные данные, проверьте вручную")
+                        errors.append(f"«{name}»: остались нарушения, проверьте вручную")
 
                 if isinstance(part, dict):
                     data.update(part)
@@ -361,6 +425,9 @@ class IPRGenerator:
                 successful=False,
                 error_message="Не удалось получить план. " + "; ".join(errors),
             )
+
+        # Число и подписи точек контроля задаём кодом, а не доверяем модели.
+        normalize_questions(data, intent.period)
 
         note = None
         if errors:
