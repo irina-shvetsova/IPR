@@ -231,19 +231,16 @@ def page_upload() -> None:
 
 
 def _show_profile(profile: Profile360) -> None:
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     col1.metric("Компетенции", len(profile.competencies))
-    col2.metric("Деструкторы", len(profile.destructors))
-    col3.metric("Оценки ролей", len(profile.roles))
+    col2.metric("Оценки ролей", len(profile.roles))
 
     with st.container(border=True):
         st.markdown("**Что распознано**")
+        st.caption("В анализ идут только компетенции и оценки ролей.")
         if profile.competencies:
             st.markdown("Компетенции")
             st.table(_items_to_rows(profile.competencies))
-        if profile.destructors:
-            st.markdown("Деструкторы")
-            st.table(_items_to_rows(profile.destructors))
         if profile.roles:
             st.markdown("Роли")
             st.table(_items_to_rows(profile.roles))
@@ -502,7 +499,10 @@ def _show_result(data: dict, raw: dict) -> None:
         if s3.get("intro"):
             st.write(s3["intro"])
         for i, z in enumerate(s3["zones"], 1):
-            st.markdown(f"**3.{i}. {z.get('title','')} — {z.get('score','')}**")
+            title = str(z.get("title", "")).strip()
+            score = str(z.get("score", "")).strip()
+            heading = title if (not score or score in title) else f"{title} — {score}"
+            st.markdown(f"**3.{i}. {heading}**")
             st.write(z.get("text", ""))
 
     # 4. Направления развития

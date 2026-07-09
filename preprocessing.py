@@ -82,7 +82,13 @@ class Profile360:
         return sorted(self.destructors, key=lambda x: x.score, reverse=True)[:limit]
 
     def to_prompt_block(self) -> str:
-        """Готовит читаемый текстовый блок профиля для вставки в промпт."""
+        """
+        Готовит читаемый текстовый блок профиля для вставки в промпт.
+
+        В анализ идут только компетенции и оценки ролей. Деструкторы намеренно
+        не передаются модели: методология работы с ними отличается, и их разбор
+        выведен за рамки текущей версии продукта.
+        """
         lines: list[str] = []
 
         if self.competencies:
@@ -90,20 +96,10 @@ class Profile360:
             for item in sorted(self.competencies, key=lambda x: x.score, reverse=True):
                 lines.append(f"- {item.name} — {_ru_number(item.score)}")
 
-        if self.destructors:
-            lines.append("\nДЕСТРУКТОРЫ:")
-            for item in sorted(self.destructors, key=lambda x: x.score, reverse=True):
-                lines.append(f"- {item.name} — {_ru_number(item.score)}")
-
         if self.roles:
             lines.append("\nОЦЕНКИ РОЛЕЙ:")
             for item in self.roles:
                 lines.append(f"- {item.name} — {_ru_number(item.score)}")
-
-        if self.qualitative_comments:
-            lines.append("\nКАЧЕСТВЕННЫЕ КОММЕНТАРИИ КОЛЛЕГ:")
-            for comment in self.qualitative_comments:
-                lines.append(f"- {comment}")
 
         return "\n".join(lines)
 

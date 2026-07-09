@@ -91,7 +91,7 @@ def render_docx(data: dict) -> bytes:
     if s3.get("intro"):
         _body(doc, s3["intro"])
     for i, z in enumerate(s3.get("zones", []), 1):
-        _h2(doc, f"3.{i}. {z.get('title','')} — {z.get('score','')}")
+        _h2(doc, f"3.{i}. {_zone_heading(z)}")
         _body(doc, z.get("text", ""))
 
     # Раздел 4 — направления развития, риски внутри каждого
@@ -279,6 +279,20 @@ def _bullet(doc, text):
 
 def _spacer(doc):
     doc.add_paragraph()
+
+
+def _zone_heading(zone: dict) -> str:
+    """
+    Собирает заголовок зоны роста, не дублируя оценку.
+
+    Модель иногда вписывает оценку прямо в title («Визионерство — 6,3»),
+    поэтому добавляем score отдельно только если его там ещё нет.
+    """
+    title = str(zone.get("title", "")).strip()
+    score = str(zone.get("score", "")).strip()
+    if not score or score in title:
+        return title
+    return f"{title} — {score}"
 
 
 def _join(items) -> str:
