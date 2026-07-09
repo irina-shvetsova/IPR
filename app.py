@@ -24,7 +24,7 @@ from datetime import datetime
 import streamlit as st
 
 from preprocessing import Profile360, parse_360_csv
-from ipr_generator import EmployeeIntent, IPRGenerator
+from ipr_generator import EmployeeIntent, IPRGenerator, checkpoint_spec
 from renderers import render_docx, render_ics
 
 
@@ -442,7 +442,8 @@ def _show_result(data: dict, raw: dict) -> None:
     st.divider()
 
     docx_bytes = render_docx(data)
-    ics_bytes = render_ics(data, start_date=datetime.now())
+    _, _, step_days = checkpoint_spec(raw.get("period", "Полугодие"))
+    ics_bytes = render_ics(data, start_date=datetime.now(), step_days=step_days)
     safe_name = raw["full_name"].replace(" ", "_") or "IPR"
 
     c1, c2 = st.columns(2)

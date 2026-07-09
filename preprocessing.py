@@ -105,9 +105,7 @@ class Profile360:
 
 
 def _ru_number(value: float) -> str:
-    """Форматирует число в русском десятичном формате: 9,5 вместо 9.5."""
-    if value == int(value):
-        return str(int(value))
+    """Форматирует число в русском десятичном формате с одним знаком: 9,5 / 9,0."""
     return f"{value:.1f}".replace(".", ",")
 
 

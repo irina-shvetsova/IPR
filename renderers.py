@@ -171,13 +171,13 @@ def render_docx(data: dict) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def render_ics(data: dict, start_date: datetime | None = None) -> bytes:
+def render_ics(data: dict, start_date: datetime | None = None, step_days: int = 90) -> bytes:
     """
-    Собирает ICS-календарь из квартальных вопросов саморефлексии.
+    Собирает ICS-календарь из вопросов саморефлексии.
 
-    Раз в квартал в календаре появляется один вопрос. Вопросы идут с нарастающей
-    интенсивностью: первый мягкий, последний — жёсткий и конкретный. Это и есть
-    точки контроля плана, а не жёсткие дедлайны.
+    Число вопросов и шаг между ними зависят от периода плана: для квартала —
+    ежемесячно, для полугодия и года — раз в квартал. Вопросы идут с нарастающей
+    интенсивностью: первый мягкий, последний — жёсткий и конкретный.
     """
     cal = Calendar()
     cal.add("prodid", "-//IPR MVP//ru")
@@ -188,14 +188,14 @@ def render_ics(data: dict, start_date: datetime | None = None) -> bytes:
 
     for idx, q in enumerate(questions):
         event = Event()
-        quarter = q.get("quarter", f"Квартал {idx + 1}")
-        event.add("summary", f"ИПР · {quarter}: вопрос для саморефлексии")
+        label = q.get("quarter", f"Точка {idx + 1}")
+        event.add("summary", f"ИПР · {label}: вопрос для саморефлексии")
         intensity = q.get("intensity", "")
         body = q.get("question", "")
         if intensity:
             body = f"[{intensity}] {body}"
         event.add("description", body)
-        event_date = (start + timedelta(days=90 * idx)).date()
+        event_date = (start + timedelta(days=step_days * idx)).date()
         event.add("dtstart", event_date)
         event.add("dtend", event_date + timedelta(days=1))
         cal.add_component(event)
