@@ -1,12 +1,8 @@
-# Версии зафиксированы: на свежих сборках (Python 3.14 + pandas 3 + pyarrow 25)
-# Streamlit падал с segmentation fault при загрузке файла.
-streamlit>=1.37,<1.50
-openai>=1.30,<2.0
-python-docx>=1.1,<2.0
-icalendar>=5.0,<7.0
-json-repair>=0.25,<1.0
-
-# Streamlit тянет их сам; закрепляем безопасные версии
-pandas>=2.2,<3.0
-numpy>=1.26,<2.3
-pyarrow>=14,<21
+# Только прямые зависимости. pandas и pyarrow намеренно не указаны:
+# препроцессинг работает на стандартной библиотеке csv, таблицы рисуются
+# markdown-ом, поэтому тяжёлые нативные пакеты в горячий путь не попадают.
+streamlit
+openai
+python-docx
+icalendar
+json-repair
