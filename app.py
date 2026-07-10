@@ -40,7 +40,7 @@ ACCENT = "#7c3aed"
 
 st.set_page_config(
     page_title="ИПР·AI — генерация плана развития",
-    page_icon="🎯",
+    page_icon=":material/target:",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -55,7 +55,9 @@ st.markdown(
         /* Базовый светлый фон и тёмный текст — не зависим от темы деплоя */
         .stApp, [data-testid="stAppViewContainer"] {{ background: #f4f5f7; color: #1a1d23; }}
         [data-testid="stHeader"] {{ background: transparent; }}
-        .main .block-container {{ padding-top: 2.2rem; max-width: 820px; }}
+        .main .block-container,
+        [data-testid="stMainBlockContainer"],
+        [data-testid="block-container"] {{ padding-top: 2.2rem; max-width: 840px; }}
         [data-testid="stSidebar"] {{ background: #ffffff; border-right: 1px solid #e2e5ea; }}
 
         /* Весь текст — тёмный, кроме кнопок и бейджей (у них свой цвет ниже) */
@@ -105,13 +107,38 @@ st.markdown(
         [data-testid="stExpander"] summary:hover {{ background: #f4f5f7 !important; }}
         [data-testid="stExpander"] summary, [data-testid="stExpander"] summary * {{ color: #1a1d23 !important; }}
 
+        /* Таблицы в markdown — как раньше выглядел st.table */
+        [data-testid="stMarkdownContainer"] table {{
+            width: 100%; border-collapse: collapse; background: #fff;
+            border: 1px solid #e2e5ea; border-radius: 8px; overflow: hidden; margin: 0.4rem 0 1rem;
+        }}
+        [data-testid="stMarkdownContainer"] th {{
+            background: #f4f5f7 !important; color: #6b7280 !important;
+            font-weight: 600; font-size: 0.82rem; text-align: left;
+            padding: 8px 12px; border-bottom: 1px solid #e2e5ea;
+        }}
+        [data-testid="stMarkdownContainer"] td {{
+            padding: 8px 12px; border-bottom: 1px solid #eef0f3;
+            font-size: 0.88rem; color: #1a1d23 !important;
+        }}
+        [data-testid="stMarkdownContainer"] tr:last-child td {{ border-bottom: none; }}
+        [data-testid="stMarkdownContainer"] td:last-child {{ text-align: right; font-variant-numeric: tabular-nums; }}
+
+        /* Оглавление — ссылки без подчёркивания, акцентного цвета */
+        .toc a {{ color: {ACCENT} !important; text-decoration: none; font-weight: 500; }}
+        .toc a:hover {{ text-decoration: underline; }}
+
         /* Кнопки — акцентные, белый текст */
-        .stButton > button, [data-testid="stDownloadButton"] button {{
+        .stButton > button, [data-testid="stDownloadButton"] button,
+        [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"],
+        [data-testid="stFileUploaderDropzone"] button {{
             background: {ACCENT} !important; color: #fff !important; border: none !important;
             border-radius: 8px; padding: 0.55rem 1.4rem; font-weight: 600;
         }}
-        .stButton > button *, [data-testid="stDownloadButton"] button * {{ color: #fff !important; }}
-        .stButton > button:hover, [data-testid="stDownloadButton"] button:hover {{ background: #6d28d9 !important; }}
+        .stButton > button *, [data-testid="stDownloadButton"] button *,
+        [data-testid="stFileUploaderDropzone"] button * {{ color: #fff !important; }}
+        .stButton > button:hover, [data-testid="stDownloadButton"] button:hover,
+        [data-testid="stFileUploaderDropzone"] button:hover {{ background: #6d28d9 !important; }}
 
         /* Прочие классы демо */
         .step-badge {{
@@ -173,7 +200,7 @@ def render_sidebar() -> None:
     """Рисует навигацию. Активный этап хранится в st.session_state.step (1–3)."""
     st.session_state.setdefault("step", 1)
     with st.sidebar:
-        st.markdown("## 🎯 ИПР·AI")
+        st.markdown("## ИПР·AI")
         st.caption("Генерация индивидуального плана развития по данным 360°")
 
         # Радио без key: индексом управляет session_state.step, клик — сверяем и перерисовываем
@@ -221,7 +248,7 @@ def page_upload() -> None:
             return
 
         st.session_state["profile"] = profile
-        st.success("Файл распознан. Проверь, что данные считаны верно.", icon="✅")
+        st.success("Файл распознан. Проверь, что данные считаны верно.")
         _show_profile(profile)
         st.divider()
         if st.button("Далее → Экраны выбора", type="primary"):
@@ -244,24 +271,29 @@ def _show_profile(profile: Profile360) -> None:
         st.caption("В анализ идут только компетенции и оценки ролей.")
         if profile.competencies:
             st.markdown("Компетенции")
-            st.markdown(_items_to_markdown(profile.competencies))
+            st.markdown(_items_to_html(profile.competencies), unsafe_allow_html=True)
         if profile.roles:
             st.markdown("Роли")
-            st.markdown(_items_to_markdown(profile.roles))
+            st.markdown(_items_to_html(profile.roles), unsafe_allow_html=True)
 
 
-def _items_to_markdown(items) -> str:
+def _items_to_html(items) -> str:
     """
-    Собирает markdown-таблицу показателей.
+    Собирает HTML-таблицу показателей.
 
     Streamlit сериализует st.table/st.dataframe через pyarrow; на некоторых
-    сборках это приводит к падению процесса, поэтому таблицу рисуем текстом.
+    сборках это роняет процесс, поэтому таблицу рисуем разметкой сами.
     """
-    lines = ["| Показатель | Оценка |", "| --- | ---: |"]
-    for item in items:
-        score = f"{item.score:.1f}".replace(".", ",")
-        lines.append(f"| {item.name} | {score} |")
-    return "\n".join(lines)
+    rows = "".join(
+        f"<tr><td>{item.name}</td>"
+        f"<td class='num'>{f'{item.score:.1f}'.replace('.', ',')}</td></tr>"
+        for item in items
+    )
+    return (
+        "<table class='ipr-table'>"
+        "<thead><tr><th>Показатель</th><th class='num'>Оценка</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -277,8 +309,7 @@ def page_choices() -> None:
     )
     st.info(
         "Отвечай реалистично и в пределах года. Цель — какой конкретный шаг сделать за "
-        "этот срок. Формулируй как наблюдаемый результат в работе.",
-        icon="🎯",
+        "этот срок. Формулируй как наблюдаемый результат в работе."
     )
 
     answers = st.session_state.get("intent_raw", {})
@@ -381,8 +412,6 @@ def page_choices() -> None:
 
 def page_generate() -> None:
     st.title("Генерация ИПР")
-    if st.button("← Назад к экранам выбора"):
-        goto_step(2)
 
     profile = st.session_state.get("profile")
     raw = st.session_state.get("intent_raw")
@@ -421,7 +450,7 @@ def page_generate() -> None:
             return
 
         st.session_state["ipr_data"] = result.data
-        st.success(f"План готов. Токенов: {result.tokens_consumed}", icon="✅")
+        st.success(f"План готов. Токенов: {result.tokens_consumed}")
         if result.error_message:
             st.warning(result.error_message)
 
@@ -437,27 +466,30 @@ def _show_result(data: dict, raw: dict) -> None:
     ics_bytes = render_ics(data, start_date=datetime.now(), step_days=step_days)
     safe_name = raw["full_name"].replace(" ", "_") or "IPR"
 
-    c1, c2 = st.columns(2)
-    c1.download_button(
-        "Скачать DOCX", data=docx_bytes,
-        file_name=f"ИПР_{safe_name}.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
-    c2.download_button(
-        "Скачать календарь (ICS)", data=ics_bytes,
-        file_name=f"ИПР_{safe_name}.ics", mime="text/calendar",
-    )
+    with st.container(border=True):
+        st.markdown("**Готовые файлы**")
+        st.caption("DOCX — сам план. ICS — квартальные вопросы для календаря.")
+        c1, c2 = st.columns(2)
+        c1.download_button(
+            "Скачать DOCX", data=docx_bytes,
+            file_name=f"ИПР_{safe_name}.docx", width="stretch",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        c2.download_button(
+            "Скачать календарь (ICS)", data=ics_bytes, width="stretch",
+            file_name=f"ИПР_{safe_name}.ics", mime="text/calendar",
+        )
 
     st.subheader("Превью полного плана")
     st.caption("Это тот же текст, что и в DOCX. Календарь — в файле ICS.")
 
     # Интерактивное оглавление: ссылки ведут на якоря разделов ниже
-    st.markdown("**Содержание**")
-    toc = "\n".join(
-        f"{idx}. [{name}](#sec-{idx})" for idx, (_, name) in enumerate(SECTIONS, start=1)
-    )
-    st.markdown(toc)
-    st.divider()
+    with st.container(border=True):
+        st.markdown("**Содержание**")
+        toc = "\n".join(
+            f"{idx}. [{name}](#sec-{idx})" for idx, (_, name) in enumerate(SECTIONS, start=1)
+        )
+        st.markdown(f'<div class="toc">\n\n{toc}\n\n</div>', unsafe_allow_html=True)
 
     st.markdown(f"### {PREAMBLE_TITLE}")
     for para in build_preamble():
@@ -562,6 +594,10 @@ def _show_result(data: dict, raw: dict) -> None:
     if data.get("section8"):
         st.header(section_title("section8"), anchor="sec-6")
         st.write(data["section8"])
+
+    st.divider()
+    if st.button("← Назад к экранам выбора"):
+        goto_step(2)
 
 
 # ---------------------------------------------------------------------------

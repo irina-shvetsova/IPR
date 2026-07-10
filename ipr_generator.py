@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from openai import OpenAI
 
@@ -371,7 +371,6 @@ class IPRGenerator:
             self._model_uri = model_id
         else:
             self._model_uri = f"gpt://{folder_id}/{model_id}/latest"
-        self._tokens_this_run = 0
         logger.info("IPRGenerator инициализирован. Модель: %s", self._model_uri)
 
     # ------------------------------------------------------------------
@@ -390,20 +389,30 @@ class IPRGenerator:
             kwargs["response_format"] = {"type": "json_object"}
         return self._client.chat.completions.create(**kwargs)
 
-    def _generate_chunk(self, messages: list[dict]) -> dict:
-        """Один запрос к модели: вызов, подсчёт токенов, разбор JSON."""
+    def _generate_chunk(self, messages: list[dict]) -> tuple[dict, int]:
+        """
+        Один запрос к модели: вызов, разбор JSON, подсчёт токенов.
+
+        Токены возвращаются, а не копятся в объекте: генератор кэшируется через
+        st.cache_resource и общий для всех прогонов, поэтому состояние на нём
+        держать нельзя.
+        """
         try:
             response = self._call_model(messages, use_json_format=True)
         except Exception:  # noqa: BLE001 — модель может не принимать response_format
             logger.warning("response_format не принят, повтор без него")
             response = self._call_model(messages, use_json_format=False)
 
-        if response.usage:
-            self._tokens_this_run += response.usage.total_tokens
+        tokens = response.usage.total_tokens if response.usage else 0
         raw = response.choices[0].message.content or ""
-        return self._parse_response(raw)
+        return self._parse_response(raw), tokens
 
-    def generate(self, profile: Profile360, intent: EmployeeIntent) -> IPRResult:
+    def generate(
+        self,
+        profile: Profile360,
+        intent: EmployeeIntent,
+        progress: "Callable[[int, int, str], None] | None" = None,
+    ) -> IPRResult:
         """
         Генерирует ИПР по частям и склеивает в один документ.
 
@@ -415,10 +424,15 @@ class IPRGenerator:
         base_prompt = self._build_user_prompt(profile, intent)
 
         data: dict = {}
-        self._tokens_this_run = 0
+        total_tokens = 0
+        total_steps = len(_CHUNKS)
         errors: list[str] = []
 
-        for name, schema in _CHUNKS:
+        for step, (name, schema) in enumerate(_CHUNKS, start=1):
+            if progress:
+                progress(step - 1, total_steps, name)
+            if name == "направления":
+                schema = schema + "\n\n" + _DEPTH_EXEMPLAR
             if "{checkpoints_rule}" in schema:
                 count, labels, _ = checkpoint_spec(intent.period)
                 rule = (
@@ -450,7 +464,8 @@ class IPRGenerator:
                 {"role": "user", "content": user_prompt},
             ]
             try:
-                part = self._generate_chunk(messages)
+                part, tokens = self._generate_chunk(messages)
+                total_tokens += tokens
 
                 # Проверяем на выдуманные цифры и источники; при нарушении —
                 # один повтор с прямым указанием, что именно исправить.
@@ -469,7 +484,8 @@ class IPRGenerator:
                         messages[0],
                         {"role": "user", "content": user_prompt + fix},
                     ]
-                    retried = self._generate_chunk(retry_messages)
+                    retried, retry_tokens = self._generate_chunk(retry_messages)
+                    total_tokens += retry_tokens
                     if not _find_violations(retried, intent.gender):
                         part = retried
                         logger.info("Часть «%s»: повтор чистый", name)
@@ -485,6 +501,9 @@ class IPRGenerator:
                 errors.append(f"«{name}»: {exc}")
                 logger.error("Часть «%s» не сгенерирована: %s", name, exc)
 
+        if progress:
+            progress(total_steps, total_steps, "")
+
         if not data:
             return IPRResult(
                 successful=False,
@@ -497,9 +516,9 @@ class IPRGenerator:
         note = None
         if errors:
             note = "План собран частично, некоторые разделы могли не заполниться: " + "; ".join(errors)
-        logger.info("ИПР собран из %d частей. Токенов: %d", len(_CHUNKS) - len(errors), self._tokens_this_run)
+        logger.info("ИПР собран из %d частей. Токенов: %d", len(_CHUNKS) - len(errors), total_tokens)
         return IPRResult(
-            data=data, successful=True, tokens_consumed=self._tokens_this_run, error_message=note
+            data=data, successful=True, tokens_consumed=total_tokens, error_message=note
         )
 
     # ------------------------------------------------------------------
@@ -601,9 +620,7 @@ class IPRGenerator:
 # ФОРМАТ ВЫВОДА
 Верни СТРОГО валидный JSON-объект: без markdown-обёрток, без комментариев, без текста вне JSON.
 В каждом задании ниже указано, КАКИЕ поля вернуть в этот раз — верни только их, полностью заполненными.
-Не оставляй незаполненных полей-заглушек. Экранируй кавычки внутри строк и не вставляй сырые переводы строк внутри значений.
-
-""" + _DEPTH_EXEMPLAR
+Не оставляй незаполненных полей-заглушек. Экранируй кавычки внутри строк и не вставляй сырые переводы строк внутри значений."""
 
     def _build_user_prompt(self, profile: Profile360, intent: EmployeeIntent) -> str:
         """Пользовательский промпт: данные 360° и ответы сотрудника."""
