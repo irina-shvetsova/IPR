@@ -24,8 +24,11 @@ from datetime import datetime
 import streamlit as st
 
 from preprocessing import Profile360, parse_360_csv
-from ipr_generator import EmployeeIntent, IPRGenerator, checkpoint_spec
-from plan_texts import SECTION1_TITLE, build_section1
+from ipr_generator import (
+    EmployeeIntent, IPRGenerator, checkpoint_spec,
+    READINESS_OPTIONS, readiness_key, readiness_plan,
+)
+from plan_texts import PREAMBLE_TITLE, SECTIONS, build_preamble, section_title
 from renderers import render_docx, render_ics
 
 
@@ -52,7 +55,7 @@ st.markdown(
         /* Базовый светлый фон и тёмный текст — не зависим от темы деплоя */
         .stApp, [data-testid="stAppViewContainer"] {{ background: #f4f5f7; color: #1a1d23; }}
         [data-testid="stHeader"] {{ background: transparent; }}
-        .main .block-container {{ padding-top: 2.2rem; max-width: 1060px; }}
+        .main .block-container {{ padding-top: 2.2rem; max-width: 820px; }}
         [data-testid="stSidebar"] {{ background: #ffffff; border-right: 1px solid #e2e5ea; }}
 
         /* Весь текст — тёмный, кроме кнопок и бейджей (у них свой цвет ниже) */
@@ -263,9 +266,8 @@ def page_choices() -> None:
         "Это вводные вопросы, на которые опирается документ."
     )
     st.info(
-        "Отвечай реалистично и в пределах периода плана. Цель — не «кем стать вообще», "
-        "а какой конкретный шаг сделать за этот срок. Формулируй как наблюдаемый "
-        "результат в работе, а не как общее желание.",
+        "Отвечай реалистично и в пределах года. Цель — какой конкретный шаг сделать за "
+        "этот срок. Формулируй как наблюдаемый результат в работе.",
         icon="🎯",
     )
 
@@ -278,11 +280,10 @@ def page_choices() -> None:
         "вертикально": "Вертикально — рост в уровне, больше ответственности и масштаба.",
     }
     dir_titles = {"углубление": "Углубление в роли", "горизонтально": "Горизонтально", "вертикально": "Вертикально"}
-    gender_options = ["Женский", "Мужской"]
 
     with st.container(border=True):
         st.subheader("Для кого план")
-        st.caption("Поля для ввода — заполни. Эти данные идут в шапку плана.")
+        st.caption("Поля для ввода — заполни. Эти данные идут в шапку плана. План составляется на год.")
         c1, c2 = st.columns(2)
         full_name = c1.text_input(
             "ФИО сотрудника", value=answers.get("full_name", ""),
@@ -292,24 +293,10 @@ def page_choices() -> None:
             "Текущая роль", value=answers.get("role", ""),
             placeholder="Например: Руководитель направления",
         )
-        c3, c4 = st.columns(2)
-        gender = c3.radio(
-            "Пол", options=gender_options,
-            index=gender_options.index(answers.get("gender", "Женский"))
-            if answers.get("gender", "Женский") in gender_options else 0,
-            horizontal=True,
-            help="Нужен, чтобы в тексте плана правильно согласовывался род.",
-        )
-        period = c4.selectbox(
-            "Период плана", options=["Полугодие", "Квартал", "Год"],
-            index=["Полугодие", "Квартал", "Год"].index(answers.get("period", "Полугодие"))
-            if answers.get("period", "Полугодие") in ("Полугодие", "Квартал", "Год") else 0,
-            help="Привязка к циклу, без жёстких дат.",
-        )
 
     with st.container(border=True):
         st.subheader("1. Направление движения")
-        st.caption("Куда движешься относительно текущей роли в пределах периода плана.")
+        st.caption("Куда движешься относительно текущей роли в ближайший год.")
         direction = st.radio(
             "Направление",
             options=dir_options,
@@ -323,14 +310,16 @@ def page_choices() -> None:
             "Пояснение — своими словами",
             value=answers.get("direction_note", ""),
             placeholder="Например: вырасти до руководителя группы из 3–4 человек",
-            help="Реалистичный шаг на период, а не мечта на 10 лет. "
-                 "Не «хочу быть CEO», а «взять под управление первый проект целиком».",
+            help="Реалистичный шаг на год, а не мечта на десять лет.",
         )
 
     with st.container(border=True):
         st.subheader("2. Три ожидания от работы через год")
-        st.caption("Не про должность, а про содержание работы и её видимый результат. "
-                   "Формулируй конкретно: что именно изменится в твоей работе.")
+        st.caption(
+            "Не про должность, а про содержание работы и её видимый результат. "
+            "Ожидания равнозначны: в плане они будут перечислены твоими словами, "
+            "без домысливания мотивов."
+        )
         prev_exp = (answers.get("expectations", ["", "", ""]) + ["", "", ""])[:3]
         e1 = st.text_input("Ожидание 1", value=prev_exp[0],
                            placeholder="Например: сам веду переговоры с крупными клиентами")
@@ -341,26 +330,19 @@ def page_choices() -> None:
 
     with st.container(border=True):
         st.subheader("3. Готовность вложиться в развитие")
-        st.caption("Определяет темп: выше готовность — мягкий старт, дальше интенсивнее.")
-        rd_options = ["Лёгкая", "Средняя", "Высокая"]
-        rd_captions = {
-            "Лёгкая": "Лёгкая — щадящий темп, небольшие шаги.",
-            "Средняя": "Средняя — устойчивый темп без перегруза.",
-            "Высокая": "Высокая — готов к интенсивной работе.",
-        }
-        readiness = st.radio(
-            "Готовность", options=rd_options,
-            index=rd_options.index(answers.get("readiness", "Средняя"))
-            if answers.get("readiness", "Средняя") in rd_options else 1,
-            horizontal=True, label_visibility="collapsed",
+        st.caption("Определяет объём плана: сколько направлений и действий он будет содержать.")
+        prev_readiness = answers.get("readiness_option", READINESS_OPTIONS[1])
+        readiness_option = st.radio(
+            "Готовность", options=READINESS_OPTIONS,
+            index=READINESS_OPTIONS.index(prev_readiness)
+            if prev_readiness in READINESS_OPTIONS else 1,
+            label_visibility="collapsed",
         )
-        st.caption(rd_captions[readiness])
-        hours = st.selectbox(
-            "Сколько часов в неделю готов уделять",
-            options=["1–2 ч", "3–5 ч", "5+ ч"],
-            index=["1–2 ч", "3–5 ч", "5+ ч"].index(answers.get("hours_per_week", "3–5 ч"))
-            if answers.get("hours_per_week", "3–5 ч") in ("1–2 ч", "3–5 ч", "5+ ч") else 1,
-            help="Влияет на реалистичность ритма и нагрузку плана.",
+        readiness = readiness_key(readiness_option)
+        volume = readiness_plan(readiness)
+        st.caption(
+            f"{volume['hint'].capitalize()}. План будет содержать "
+            f"{volume['directions']} направления, по {volume['actions']} действия в каждом."
         )
 
     st.divider()
@@ -374,11 +356,10 @@ def page_choices() -> None:
                 st.warning("Укажи ФИО сотрудника.")
                 return
             st.session_state["intent_raw"] = {
-                "full_name": full_name, "role": role, "period": period,
-                "gender": gender,
+                "full_name": full_name, "role": role, "period": "Год",
                 "direction": direction, "direction_note": direction_note,
                 "expectations": [e1, e2, e3],
-                "readiness": readiness, "hours_per_week": hours,
+                "readiness": readiness, "readiness_option": readiness_option,
             }
             goto_step(3)
 
@@ -411,16 +392,15 @@ def page_generate() -> None:
     st.write("Готово к сборке. Профиль и ответы сотрудника подобраны.")
     cols = st.columns(3)
     cols[0].metric("Направление", raw["direction"].capitalize())
-    cols[1].metric("Готовность · темп", f"{raw['readiness']} · {raw['hours_per_week']}")
+    cols[1].metric("Готовность", raw.get("readiness_option", raw["readiness"]))
     cols[2].metric("Компетенций", len(profile.competencies))
 
     if st.button("Сформировать ИПР", type="primary"):
         intent = EmployeeIntent(
-            full_name=raw["full_name"], role=raw["role"], period=raw["period"],
-            gender=raw.get("gender", "Женский").lower(),
+            full_name=raw["full_name"], role=raw["role"], period="Год",
             direction=raw["direction"], direction_note=raw["direction_note"],
             expectations=[e for e in raw["expectations"] if e.strip()],
-            readiness=raw["readiness"], hours_per_week=raw["hours_per_week"],
+            readiness=raw["readiness"],
         )
         with st.spinner("DeepSeek собирает план…"):
             generator = build_generator(api_key, folder_id, model_id)
@@ -443,7 +423,7 @@ def _show_result(data: dict, raw: dict) -> None:
     st.divider()
 
     docx_bytes = render_docx(data)
-    _, _, step_days = checkpoint_spec(raw.get("period", "Полугодие"))
+    _, _, step_days = checkpoint_spec("Год")
     ics_bytes = render_ics(data, start_date=datetime.now(), step_days=step_days)
     safe_name = raw["full_name"].replace(" ", "_") or "IPR"
 
@@ -461,19 +441,22 @@ def _show_result(data: dict, raw: dict) -> None:
     st.subheader("Превью полного плана")
     st.caption("Это тот же текст, что и в DOCX. Календарь — в файле ICS.")
 
-    header = data.get("header", {})
-    st.markdown(f"### {SECTION1_TITLE}")
-    for para in build_section1(
-        header.get("full_name", raw.get("full_name", "")),
-        header.get("role", raw.get("role", "")),
-        header.get("period", raw.get("period", "Полугодие")),
-    ):
+    # Интерактивное оглавление: ссылки ведут на якоря разделов ниже
+    st.markdown("**Содержание**")
+    toc = "\n".join(
+        f"{idx}. [{name}](#sec-{idx})" for idx, (_, name) in enumerate(SECTIONS, start=1)
+    )
+    st.markdown(toc)
+    st.divider()
+
+    st.markdown(f"### {PREAMBLE_TITLE}")
+    for para in build_preamble():
         st.write(para)
 
-    # 2. Контекст развития
+    # 1. Контекст развития
     s2 = data.get("section2", {})
     if s2:
-        st.markdown("### 2. Контекст развития")
+        st.header(section_title("section2"), anchor="sec-1")
         if s2.get("narrative"):
             st.write(s2["narrative"])
         if s2.get("strengths"):
@@ -486,30 +469,31 @@ def _show_result(data: dict, raw: dict) -> None:
                 st.markdown(f"- {it.get('name','')} — {it.get('score','')}. {it.get('note','')}")
         t = s2.get("table", {})
         if t:
-            for label, key in [("Что мотивирует", "motivates"), ("Фокус плана", "focus"),
-                               ("Ключевой сдвиг", "key_shift"), ("Вне фокуса", "out_of_focus")]:
+            for label, key in [("Твои ожидания", "stated_expectations"),
+                               ("Фокус плана", "focus"),
+                               ("Ключевой сдвиг", "key_shift")]:
                 if t.get(key):
                     st.markdown(f"- **{label}:** {t[key]}")
         if s2.get("source_note"):
             st.caption(s2["source_note"])
 
-    # 3. Зоны роста
+    # 2. Зоны роста
     s3 = data.get("section3", {})
     if s3.get("zones"):
-        st.markdown("### 3. Зоны роста по результатам 360°")
+        st.header(section_title("section3"), anchor="sec-2")
         if s3.get("intro"):
             st.write(s3["intro"])
         for i, z in enumerate(s3["zones"], 1):
             title = str(z.get("title", "")).strip()
             score = str(z.get("score", "")).strip()
             heading = title if (not score or score in title) else f"{title} — {score}"
-            st.markdown(f"**3.{i}. {heading}**")
+            st.markdown(f"**2.{i}. {heading}**")
             st.write(z.get("text", ""))
 
-    # 4. Направления развития
+    # 3. Направления развития
     s4 = data.get("section4", {})
     if s4.get("directions"):
-        st.markdown("### 4. Направления развития")
+        st.header(section_title("section4"), anchor="sec-3")
         if s4.get("intro"):
             st.write(s4["intro"])
         for d in s4["directions"]:
@@ -537,10 +521,10 @@ def _show_result(data: dict, raw: dict) -> None:
                 parts = [ras.get("risk", ""), ras.get("how_to_manage", ""), ras.get("psychological_support", "")]
                 st.markdown("**Риски и поддержка:** " + " ".join(p for p in parts if p))
 
-    # 5. Обучение
+    # 4. Обучение
     s5 = data.get("section5", {})
     if s5:
-        st.markdown("### 5. Обучение и источники")
+        st.header(section_title("section5"), anchor="sec-4")
         if s5.get("intro"):
             st.write(s5["intro"])
         for grp in s5.get("books", []):
@@ -555,18 +539,18 @@ def _show_result(data: dict, raw: dict) -> None:
         if s5.get("source_note"):
             st.caption(s5["source_note"])
 
-    # 6. Точки контроля
+    # 5. Точки контроля
     s7 = data.get("section7", {})
     if s7.get("questions"):
-        st.markdown("### 6. Точки контроля — вопросы для саморефлексии")
+        st.header(section_title("section7") + " — вопросы для саморефлексии", anchor="sec-5")
         if s7.get("note"):
             st.caption(s7["note"])
         for q in s7["questions"]:
             st.markdown(f"- **{q.get('quarter','')}** ({q.get('intensity','')}): {q.get('question','')}")
 
-    # 7. Согласование
+    # 6. Согласование
     if data.get("section8"):
-        st.markdown("### 7. Согласование")
+        st.header(section_title("section8"), anchor="sec-6")
         st.write(data["section8"])
 
 

@@ -20,7 +20,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
 from icalendar import Calendar, Event
 
-from plan_texts import SECTION1_TITLE, build_section1
+from plan_texts import PREAMBLE_TITLE, build_preamble, section_number, section_title
 
 # Фирменный акцент — как в дельтовском референсе
 _ACCENT = RGBColor(0x7C, 0x3A, 0xED)
@@ -49,16 +49,14 @@ def render_docx(data: dict) -> bytes:
         _kv(doc, "Основание", header["basis"])
     _muted(doc, "Конфиденциальный документ", italic=True)
 
-    # Раздел 1 — универсальный, не генерируется моделью
-    _h1(doc, SECTION1_TITLE)
-    for para in build_section1(
-        header.get("full_name", ""), header.get("role", ""), header.get("period", "Полугодие")
-    ):
+    # Преамбула — универсальная, не генерируется моделью
+    _h1(doc, PREAMBLE_TITLE)
+    for para in build_preamble():
         _body(doc, para)
 
-    # Раздел 2 — персональный контекст
+    # 1. Контекст развития
     s2 = data.get("section2", {})
-    _h1(doc, "2. КОНТЕКСТ РАЗВИТИЯ")
+    _h1(doc, section_title("section2").upper())
     if s2.get("narrative"):
         _body(doc, s2["narrative"])
     if s2.get("strengths"):
@@ -72,10 +70,9 @@ def render_docx(data: dict) -> bytes:
     table = s2.get("table", {})
     if table:
         rows = [
-            ("Что мотивирует", table.get("motivates", "")),
+            ("Твои ожидания", table.get("stated_expectations", "")),
             ("Фокус плана", table.get("focus", "")),
             ("Ключевой сдвиг", table.get("key_shift", "")),
-            ("Вне фокуса", table.get("out_of_focus", "")),
         ]
         _two_col_table(doc, rows)
     if s2.get("source_note"):
@@ -83,16 +80,16 @@ def render_docx(data: dict) -> bytes:
 
     # Раздел 3
     s3 = data.get("section3", {})
-    _h1(doc, "3. ЗОНЫ РОСТА ПО РЕЗУЛЬТАТАМ 360°")
+    _h1(doc, section_title("section3").upper())
     if s3.get("intro"):
         _body(doc, s3["intro"])
     for i, z in enumerate(s3.get("zones", []), 1):
-        _h2(doc, f"3.{i}. {_zone_heading(z)}")
+        _h2(doc, f"{section_number('section3')}.{i}. {_zone_heading(z)}")
         _body(doc, z.get("text", ""))
 
     # Раздел 4 — направления развития, риски внутри каждого
     s4 = data.get("section4", {})
-    _h1(doc, "4. НАПРАВЛЕНИЯ РАЗВИТИЯ")
+    _h1(doc, section_title("section4").upper())
     if s4.get("intro"):
         _body(doc, s4["intro"])
     for d in s4.get("directions", []):
@@ -118,7 +115,7 @@ def render_docx(data: dict) -> bytes:
 
     # Раздел 5 — обучение
     s5 = data.get("section5", {})
-    _h1(doc, "5. ОБУЧЕНИЕ И ИСТОЧНИКИ РАЗВИТИЯ")
+    _h1(doc, section_title("section5").upper())
     if s5.get("intro"):
         _body(doc, s5["intro"])
     if s5.get("source_note"):
@@ -139,7 +136,7 @@ def render_docx(data: dict) -> bytes:
 
     # Раздел 6 — точки контроля как квартальные вопросы саморефлексии
     s7 = data.get("section7", {})
-    _h1(doc, "6. ТОЧКИ КОНТРОЛЯ — ВОПРОСЫ ДЛЯ САМОРЕФЛЕКСИИ")
+    _h1(doc, section_title("section7").upper() + " — ВОПРОСЫ ДЛЯ САМОРЕФЛЕКСИИ")
     if s7.get("note"):
         _muted(doc, s7["note"], italic=True)
     for q in s7.get("questions", []):
@@ -150,7 +147,7 @@ def render_docx(data: dict) -> bytes:
 
     # Раздел 7 — согласование
     if data.get("section8"):
-        _h1(doc, "7. СОГЛАСОВАНИЕ")
+        _h1(doc, section_title("section8").upper())
         _body(doc, data["section8"])
         _spacer(doc)
         _body(doc, "Сотрудник / подпись, дата: ____________________")
