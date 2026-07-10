@@ -244,14 +244,24 @@ def _show_profile(profile: Profile360) -> None:
         st.caption("В анализ идут только компетенции и оценки ролей.")
         if profile.competencies:
             st.markdown("Компетенции")
-            st.table(_items_to_rows(profile.competencies))
+            st.markdown(_items_to_markdown(profile.competencies))
         if profile.roles:
             st.markdown("Роли")
-            st.table(_items_to_rows(profile.roles))
+            st.markdown(_items_to_markdown(profile.roles))
 
 
-def _items_to_rows(items) -> list[dict]:
-    return [{"Показатель": it.name, "Оценка": str(it.score).replace(".", ",")} for it in items]
+def _items_to_markdown(items) -> str:
+    """
+    Собирает markdown-таблицу показателей.
+
+    Streamlit сериализует st.table/st.dataframe через pyarrow; на некоторых
+    сборках это приводит к падению процесса, поэтому таблицу рисуем текстом.
+    """
+    lines = ["| Показатель | Оценка |", "| --- | ---: |"]
+    for item in items:
+        score = f"{item.score:.1f}".replace(".", ",")
+        lines.append(f"| {item.name} | {score} |")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

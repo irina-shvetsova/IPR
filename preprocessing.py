@@ -21,10 +21,9 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
-from io import BytesIO, StringIO
-
-import pandas as pd
+from io import StringIO
 
 
 # Допустимые значения колонки «тип» и их канонизация
@@ -132,13 +131,15 @@ def _parse_score(raw) -> float | None:
         return None
 
 
-def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Приводит заголовки колонок к каноническим именам type/name/score/comment."""
-    renamed = {}
-    for col in df.columns:
-        key = str(col).strip().lower()
-        renamed[col] = _COLUMN_ALIASES.get(key, key)
-    return df.rename(columns=renamed)
+def _normalize_row(row: dict) -> dict:
+    """Приводит ключи строки к каноническим именам type/name/score/comment."""
+    normalized: dict = {}
+    for col, value in row.items():
+        if col is None:
+            continue
+        key = str(col).strip().lower().lstrip("\ufeff")
+        normalized[_COLUMN_ALIASES.get(key, key)] = value
+    return normalized
 
 
 def parse_360_csv(file_bytes: bytes) -> Profile360:
@@ -156,10 +157,10 @@ def parse_360_csv(file_bytes: bytes) -> Profile360:
     Raises:
         ValueError: Если файл не удалось прочитать ни одним из вариантов.
     """
-    df = _read_dataframe(file_bytes)
-    df = _normalize_columns(df)
+    rows = _read_rows(file_bytes)
+    rows = [_normalize_row(r) for r in rows]
 
-    if "name" not in df.columns and "score" not in df.columns:
+    if not rows or not any("name" in r or "score" in r for r in rows):
         raise ValueError(
             "Не найдены колонки с названием и оценкой. "
             "Ожидаются колонки: тип, название, оценка, комментарий."
@@ -167,8 +168,8 @@ def parse_360_csv(file_bytes: bytes) -> Profile360:
 
     profile = Profile360()
 
-    for _, row in df.iterrows():
-        raw_type = str(row.get("type", "")).strip().lower()
+    for row in rows:
+        raw_type = _clean_text(row.get("type", "")).lower()
         item_type = _TYPE_ALIASES.get(raw_type, "")
         name = _clean_text(row.get("name", ""))
         comment = _clean_text(row.get("comment", ""))
@@ -202,21 +203,31 @@ def parse_360_csv(file_bytes: bytes) -> Profile360:
     return profile
 
 
-def _read_dataframe(file_bytes: bytes) -> pd.DataFrame:
-    """Пытается прочитать CSV в разных кодировках и с разными разделителями."""
+def _read_rows(file_bytes: bytes) -> list[dict]:
+    """
+    Читает CSV стандартной библиотекой, перебирая кодировки и разделители.
+
+    Namedtuple/DataFrame не используются намеренно: pandas и pyarrow — тяжёлые
+    нативные зависимости, а для разбора небольшой выгрузки достаточно csv.
+    """
     last_error: Exception | None = None
     for encoding in ("utf-8-sig", "utf-8", "cp1251"):
+        try:
+            text = file_bytes.decode(encoding)
+        except Exception as exc:  # noqa: BLE001 — пробуем следующую кодировку
+            last_error = exc
+            continue
+
         for sep in (",", ";", "\t"):
             try:
-                text = file_bytes.decode(encoding)
-                df = pd.read_csv(StringIO(text), sep=sep)
-                if df.shape[1] >= 2:
-                    return df
+                reader = csv.DictReader(StringIO(text), delimiter=sep)
+                if not reader.fieldnames or len(reader.fieldnames) < 2:
+                    continue
+                rows = [row for row in reader]
+                if rows:
+                    return rows
             except Exception as exc:  # noqa: BLE001 — перебираем варианты чтения
                 last_error = exc
                 continue
-    # Последняя попытка — пусть pandas сам определит параметры
-    try:
-        return pd.read_csv(BytesIO(file_bytes))
-    except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"Не удалось прочитать CSV: {last_error or exc}")
+
+    raise ValueError(f"Не удалось прочитать CSV: {last_error or 'формат не распознан'}")
