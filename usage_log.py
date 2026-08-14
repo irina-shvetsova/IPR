@@ -160,3 +160,41 @@ def log_generation(session_id: str, full_name: str, plan: dict,
         "warning": warning or "",
         "plan": plan,
     })
+
+
+def read_log(limit: int | None = None) -> list[dict]:
+    """
+    Читает лог для выгрузки/просмотра.
+
+    Если настроена Google-таблица — читает из неё, иначе из локального файла.
+    Возвращает список событий; при недоступности источника — пустой список.
+    """
+    ws = _get_worksheet()
+    if ws is not None:
+        try:
+            rows = ws.get_all_values()
+            records = []
+            for row in rows[1:]:  # пропускаем заголовок
+                cells = (row + [""] * len(_HEADER))[:len(_HEADER)]
+                ts, session, event, _name, _tokens, _warning, details = cells
+                try:
+                    data = json.loads(details) if details else {}
+                except json.JSONDecodeError:
+                    data = {}
+                records.append({"ts": ts, "session": session, "event": event, "data": data})
+            return records[-limit:] if limit else records
+        except Exception:  # noqa: BLE001 — при сбое таблицы читаем файл
+            pass
+
+    if not os.path.exists(LOG_PATH):
+        return []
+    records = []
+    with open(LOG_PATH, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return records[-limit:] if limit else records
