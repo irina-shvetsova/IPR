@@ -6,3 +6,5 @@ openai
 python-docx
 icalendar
 json-repair
+gspread
+google-auth
