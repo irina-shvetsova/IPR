@@ -218,17 +218,6 @@ def render_sidebar() -> None:
         st.divider()
         st.caption("Пайплайн: препроцессинг → промпт DeepSeek → DOCX / ICS")
 
-        log_records = usage_log.read_log()
-        if log_records:
-            import json as _json
-            log_bytes = "\n".join(
-                _json.dumps(r, ensure_ascii=False) for r in log_records
-            ).encode("utf-8")
-            st.download_button(
-                "Скачать лог использования", data=log_bytes,
-                file_name="usage_log.jsonl", mime="application/json",
-            )
-
 
 def goto_step(step: int) -> None:
     """Переключает активный этап и перерисовывает страницу."""
