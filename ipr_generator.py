@@ -389,23 +389,44 @@ class IPRGenerator:
             kwargs["response_format"] = {"type": "json_object"}
         return self._client.chat.completions.create(**kwargs)
 
-    def _generate_chunk(self, messages: list[dict]) -> tuple[dict, int]:
+    def _generate_chunk(self, messages: list[dict], attempts: int = 2) -> tuple[dict, int]:
         """
         Один запрос к модели: вызов, разбор JSON, подсчёт токенов.
 
         Токены возвращаются, а не копятся в объекте: генератор кэшируется через
         st.cache_resource и общий для всех прогонов, поэтому состояние на нём
         держать нельзя.
-        """
-        try:
-            response = self._call_model(messages, use_json_format=True)
-        except Exception:  # noqa: BLE001 — модель может не принимать response_format
-            logger.warning("response_format не принят, повтор без него")
-            response = self._call_model(messages, use_json_format=False)
 
-        tokens = response.usage.total_tokens if response.usage else 0
-        raw = response.choices[0].message.content or ""
-        return self._parse_response(raw), tokens
+        flash на Яндексе иногда возвращает пустой ответ — тогда JSON не
+        разбирается («Expecting value»). На этот случай делаем до `attempts`
+        попыток, прежде чем сдаться: разовая осечка модели не доходит до плана.
+        """
+        total = 0
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                response = self._call_model(messages, use_json_format=True)
+            except Exception:  # noqa: BLE001 — модель может не принимать response_format
+                logger.warning("response_format не принят, повтор без него")
+                response = self._call_model(messages, use_json_format=False)
+
+            total += response.usage.total_tokens if response.usage else 0
+            raw = (response.choices[0].message.content or "").strip()
+
+            if not raw:
+                last_error = ValueError("пустой ответ модели")
+                logger.warning("Пустой ответ модели (попытка %d/%d)", attempt + 1, attempts)
+                continue
+            try:
+                part = self._parse_response(raw)
+                if part:  # непустой словарь — успех
+                    return part, total
+                last_error = ValueError("пустой JSON")
+            except Exception as exc:  # noqa: BLE001 — битый JSON, пробуем ещё раз
+                last_error = exc
+                logger.warning("Ответ не разобран (попытка %d/%d): %s", attempt + 1, attempts, exc)
+
+        raise last_error or ValueError("не удалось получить ответ модели")
 
     def generate(
         self,
