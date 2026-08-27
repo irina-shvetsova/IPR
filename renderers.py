@@ -141,15 +141,8 @@ def render_docx(data: dict) -> bytes:
         _muted(doc, s7["note"], italic=True)
     for q in s7.get("questions", []):
         quarter = q.get("quarter", "")
-        intensity = q.get("intensity", "")
-        prefix = f"{quarter}" + (f" ({intensity})" if intensity else "")
-        _bullet(doc, f"{prefix}. {q.get('question','')}")
-
-    # Раздел 7 — согласование
-    if data.get("section8"):
-        _h1(doc, section_title("section8").upper())
-        _body(doc, data["section8"])
-        _spacer(doc)
+        prefix = f"{quarter}. " if quarter else ""
+        _bullet(doc, f"{prefix}{q.get('question','')}")
         _body(doc, "Сотрудник / подпись, дата: ____________________")
         _body(doc, "Руководитель / подпись, дата: ____________________")
         _body(doc, "HR-партнёр / подпись, дата: ____________________")
@@ -183,11 +176,7 @@ def render_ics(data: dict, start_date: datetime | None = None, step_days: int = 
         event = Event()
         label = q.get("quarter", f"Точка {idx + 1}")
         event.add("summary", f"ИПР · {label}: вопрос для саморефлексии")
-        intensity = q.get("intensity", "")
-        body = q.get("question", "")
-        if intensity:
-            body = f"[{intensity}] {body}"
-        event.add("description", body)
+        event.add("description", q.get("question", ""))
         event_date = (start + timedelta(days=step_days * idx)).date()
         event.add("dtstart", event_date)
         event.add("dtend", event_date + timedelta(days=1))
