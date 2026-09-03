@@ -535,10 +535,8 @@ class IPRGenerator:
                 logger.error("Часть «%s» не сгенерирована: %s", name, exc)
                 return name, None, chunk_tokens, f"«{name}»: {exc}"
             finally:
-                if progress:
-                    with lock:
-                        done_count += 1
-                        progress(done_count, total_steps, name)
+                with lock:
+                    done_count += 1
 
         data: dict = {}
         total_tokens = 0
@@ -553,6 +551,10 @@ class IPRGenerator:
                     data.update(part)
                 if error:
                     errors.append(error)
+                # UI-обновление — только из главного потока: Streamlit требует
+                # контекст сессии, которого нет в рабочих потоках пула.
+                if progress:
+                    progress(done_count, total_steps, name)
 
         if not data:
             return IPRResult(
