@@ -150,10 +150,13 @@ def log_upload(session_id: str, filename: str, profile) -> None:
 
     _event(session_id, "upload", {
         "filename": filename,
-        "n_competencies": len(profile.competencies),
+        "n_base_competencies": len(profile.base_competencies),
+        "n_managerial_competencies": len(profile.managerial_competencies),
         "n_destructors": len(profile.destructors),
         "n_roles": len(profile.roles),
-        "competencies": [{"name": c.name, "score": c.score} for c in profile.competencies],
+        "n_risk_zones": len(profile.risk_zones()),
+        "base_competencies": [{"name": c.name, "score": c.score} for c in profile.base_competencies],
+        "managerial_competencies": [{"name": c.name, "score": c.score} for c in profile.managerial_competencies],
         "roles": [{"name": r.name, "score": r.score} for r in profile.roles],
     })
 
